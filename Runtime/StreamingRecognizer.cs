@@ -11,6 +11,7 @@ using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Google.Cloud.Speech.V1;
 using Grpc.Core;
+using UnityEngine.Networking;
 
 namespace GoogleCloudStreamingSpeechToText {
     [Serializable]
@@ -31,7 +32,8 @@ namespace GoogleCloudStreamingSpeechToText {
                 }
             }
         }
-
+        
+        public string language_code;
         public bool startOnAwake = true;
         public bool returnInterimResults = true;
         public bool enableDebugLogging = false;
@@ -102,16 +104,14 @@ namespace GoogleCloudStreamingSpeechToText {
             _restart = true;
             StopListening();
         }
+        string credentialsPath;
+        string sJson;
+        
+        private void Awake()
+        {
 
-        private void Awake() {
-            string credentialsPath = Path.Combine(Application.streamingAssetsPath, CredentialFileName);
-            if (!File.Exists(credentialsPath)) {
-                Debug.LogError("Could not find StreamingAssets/gcp_credentials.json. Please create a Google service account key for a Google Cloud Platform project with the Speech-to-Text API enabled, then download that key as a JSON file and save it as StreamingAssets/gcp_credentials.json in this project. For more info on creating a service account key, see Google's documentation: https://cloud.google.com/speech-to-text/docs/quickstart-client-libraries#before-you-begin");
-                return;
-            }
-
-            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", credentialsPath);
-
+            StartCoroutine(RequestGCPKey());
+            
             AudioConfiguration audioConfiguration = AudioSettings.GetConfiguration();
 
             _buffer = new byte[audioConfiguration.dspBufferSize * 2];
@@ -192,6 +192,78 @@ namespace GoogleCloudStreamingSpeechToText {
             await _streamingCall.WriteAsync(new StreamingRecognizeRequest() { AudioContent = chunk });
         }
 
+        private IEnumerator RequestGCPKey()
+        {
+            if (Application.platform == RuntimePlatform.Android)
+            {
+
+                // Use jar:file:// URL for Android
+                credentialsPath = Path.Combine(Application.streamingAssetsPath + "/", CredentialFileName);
+
+                // Use UnityWebRequest to read the file
+                UnityWebRequest www = UnityWebRequest.Get(credentialsPath);
+                www.SendWebRequest();
+
+                while (!www.isDone)
+                    yield return new WaitUntil(() => www.isDone);
+                
+                sJson = www.downloadHandler.text;
+                Debug.Log(sJson);
+                if (www.isNetworkError || www.isHttpError)
+                {
+                    Debug.LogError("Error loading GCP Key JSON file: " + www.error);
+                    yield return null;
+                }
+
+                // Combine the persistent data path with the file name
+                credentialsPath = Path.Combine(Application.persistentDataPath, CredentialFileName);
+
+                try
+                {
+                    // Write the JSON string to the file
+                    File.WriteAllText(credentialsPath, sJson);
+                    Debug.Log("JSON data saved to: " + credentialsPath);
+                }
+                catch (IOException e)
+                {
+                    Debug.LogError("Error writing JSON data: " + e.Message);
+                }
+            }
+            else
+            {
+                credentialsPath = Path.Combine(Application.streamingAssetsPath, CredentialFileName);
+                if (!File.Exists(credentialsPath))
+                {
+                    Debug.LogError(
+                        "Could not find StreamingAssets/gcp_credentials.json. Please create a Google service account key for a Google Cloud Platform project with the Speech-to-Text API enabled, then download that key as a JSON file and save it as StreamingAssets/gcp_credentials.json in this project. For more info on creating a service account key, see Google's documentation: https://cloud.google.com/speech-to-text/docs/quickstart-client-libraries#before-you-begin");
+                    yield return null;
+                }
+
+                sJson = File.ReadAllText(credentialsPath);
+            }
+
+            Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", credentialsPath);
+            string jsonEnvGCP = Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS");
+
+            try
+            {
+                var jsonText = File.ReadAllText(jsonEnvGCP);
+                var jsonRead = 
+                    Newtonsoft.Json.JsonConvert.
+                        DeserializeObject<Google.Apis.Auth.OAuth2.JsonCredentialParameters>(jsonText);
+                Debug.Log(jsonRead);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                Debug.LogError(e);
+                throw;
+            }
+            
+            Debug.Log("GCP Credentials: " + jsonEnvGCP);
+        }
+        
+
         private IEnumerator RequestMicrophoneAuthorizationAndStartListening() {
             while (!Application.HasUserAuthorization(UserAuthorization.Microphone)) {
                 yield return Application.RequestUserAuthorization(UserAuthorization.Microphone);
@@ -199,7 +271,6 @@ namespace GoogleCloudStreamingSpeechToText {
 
             InitializeMicrophoneAndBeginStream();
         }
-
         private void InitializeMicrophoneAndBeginStream() {
             if (enableDebugLogging) {
                 Debug.Log("Starting...");
@@ -290,7 +361,7 @@ namespace GoogleCloudStreamingSpeechToText {
                     Config = new RecognitionConfig() {
                         Encoding = RecognitionConfig.Types.AudioEncoding.Linear16,
                         SampleRateHertz = audioConfiguration.sampleRate,
-                        LanguageCode = "en",
+                        LanguageCode = language_code,
                         MaxAlternatives = 1
                     },
                     InterimResults = returnInterimResults,
