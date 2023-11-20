@@ -248,15 +248,16 @@ namespace GoogleCloudStreamingSpeechToText {
             try
             {
                 var jsonText = File.ReadAllText(jsonEnvGCP);
+                Debug.Log("Credentials Json Text: " + jsonText);
                 var jsonRead = 
                     Newtonsoft.Json.JsonConvert.
                         DeserializeObject<Google.Apis.Auth.OAuth2.JsonCredentialParameters>(jsonText);
-                Debug.Log(jsonRead);
+                Debug.Log("Retrieving GCP Credentials JSON Success: " + jsonRead);
             }
             catch (Exception e)
             {
                 Console.WriteLine(e);
-                Debug.LogError(e);
+                Debug.LogError("Retrieving GCP Credentials JSON Failed: " + e);
                 throw;
             }
             
